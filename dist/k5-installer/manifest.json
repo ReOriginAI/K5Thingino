@@ -1,0 +1,58 @@
+{
+  "version": "k5-v3-sd-recovery-20261012",
+  "profile": "wansview_k5_t21n_ov2735b_rtl8188fu",
+  "prepared_utc": "20261012T142737Z",
+  "source_base_commit": "b310438feb288cbba05c053860975cd2bfc7e1b5",
+  "source_tree_has_local_changes": true,
+  "camera_profile_sha256": "f45314de8532cc69dbd218462dd407ccb9ffb3d0ad137eee7d84514d41e9c311",
+  "installer_source_sha256": "41659d3ad1cda28fa7f8c6f67d012f271b4d11b5cfba461afe73c688362530d3",
+  "installer_version": "v3-readonly-first",
+  "arm_marker_bundled": false,
+  "camera_hardware_tested": true,
+  "original_runtime_root_cause_proven": false,
+  "host_runtime_tests_passed": 12,
+  "host_installer_simulation_tests_passed": 7,
+  "kernel": {
+    "bytes": 1516106,
+    "crc32": "afaa648c",
+    "sha256": "e47759543ff3522e851d505c531791cc351a8c439d3cb20c42bd949dcfd9c97a",
+    "load_address": "0x80010000",
+    "entry_point": "0x80398380"
+  },
+  "rootfs": {
+    "bytes": 5464064,
+    "crc32": "b51dfa34",
+    "sha256": "72fee6415e1ba91993a371cdd0480e268bca67c6487c7908ffb508d5674c43d7"
+  },
+  "kernel_command_line": "console=ttyS1,115200n8 mem=41M@0x0 rmem=23M@0x2900000 panic=2 init=/init rootfstype=squashfs root=/dev/mtdblock2 rw mtdparts=jz_sfc:256k(boot),2560k(kernel),6144k(rootfs),2944k(data),320k(syscfg),320k(sysbak),1472k(minikernel),2304k(minirootfs),64k(upgrade)",
+  "flash_write_targets": [
+    "factory mtd1 at 0x040000 (0x280000 bytes)",
+    "factory mtd2 at 0x2c0000 (0x8e0000 bytes)"
+  ],
+  "stock_bootloader_and_non_os_partitions_preserved": true,
+  "all_eight_partitions_backed_up_before_writes": true,
+  "independent_readback_and_erased_tail_check": true,
+  "best_effort_factory_kernel_and_root_rollback": true,
+  "runtime_changes": [
+    "built-in FAT32 and charsets",
+    "early SD phase logging",
+    "correct module paths",
+    "asynchronous configured Wi-Fi",
+    "persistent failed-attempt latch",
+    "independent 180-second startup guard",
+    "RAM-only fallback portal",
+    "bounded shutdown with armed watchdog",
+    "Wi-Fi-only long Reset",
+    "data-only firstboot",
+    "disabled stock-layout ENV writes"
+  ],
+  "hardware_validation": {
+    "status": "user-reported-working",
+    "reported_on": "2026-10-12",
+    "user_report": "yes it works now",
+    "scope": "V3 reported working on the original K5 unit; individual Wi-Fi modes, cold boot, reset, SD filesystems and video were not separately documented.",
+    "kernel_sha256": "e47759543ff3522e851d505c531791cc351a8c439d3cb20c42bd949dcfd9c97a",
+    "rootfs_sha256": "72fee6415e1ba91993a371cdd0480e268bca67c6487c7908ffb508d5674c43d7",
+    "installer_sha256": "d9eb81d5fe7a6a4d7ee1b030b02aa4fe37b5b775db9f128ebbd4bd7a6fe83e75"
+  }
+}

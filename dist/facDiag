@@ -1,0 +1,30 @@
+#!/bin/sh
+# Runs in factory firmware. This package starts in read-only mode.
+set -u
+for sd in /mnt/mmc /var/sdcard /mnt/mmcblk0p1 /mnt/sdcard; do
+	package="$sd/k5-installer"
+	[ -f "$package/preflight.sh" ] || continue
+	if ! sh "$package/preflight.sh" "$sd"; then
+		mv "$sd/facDiag" "$sd/facDiag.probed" 2>/dev/null || true
+		sync
+		exit 1
+	fi
+	if [ ! -x "$package/k5-flash-static" ]; then
+		mv "$sd/facDiag" "$sd/facDiag.probed" 2>/dev/null || true
+		sync
+		exit 1
+	fi
+	if [ ! -f "$package/INSTALL_NOW" ]; then
+		"$package/k5-flash-static" --check-only
+		result=$?
+		mv "$sd/facDiag" "$sd/facDiag.probed" || exit 1
+		sync
+		exit "$result"
+	fi
+	# Disarm before any write, including if the installer subsequently fails.
+	mv "$sd/facDiag" "$sd/facDiag.flash-attempt" || exit 1
+	sync
+	exec "$package/k5-flash-static"
+done
+echo 'ABORT: missing k5-installer/preflight.sh' >&2
+exit 1

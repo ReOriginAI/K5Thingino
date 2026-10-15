@@ -11,7 +11,7 @@ k5-logs/
 # Local upstream checkout, compiler caches, downloaded tools and artifacts.
 /thingino-firmware/
 /tools/
-/dist/
+
 /releases/*.zip
 /docs/logs/
 __pycache__/
