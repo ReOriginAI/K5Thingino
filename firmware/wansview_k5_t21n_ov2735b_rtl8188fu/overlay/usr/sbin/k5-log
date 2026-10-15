@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+# Events deliberately contain no SSIDs, keys, MACs, or command output.
+event=${1:-unknown}
+case "$event" in
+	'' | *[!a-zA-Z0-9_.:-]*) exit 1 ;;
+esac
+mkdir -p /run
+printf '%s %s\n' "$(cut -d' ' -f1 /proc/uptime)" "$event" >>/run/k5-events.log
+logger -t k5 "$event"
+card=/mnt/mmcblk0p1
+if mountpoint -q "$card" && [ -d "$card/k5-logs" ]; then
+	cp /run/k5-events.log "$card/k5-logs/events-latest.txt"
+	sync
+fi

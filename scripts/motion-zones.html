@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Motion zones · Thingino</title>
+<style>
+*{box-sizing:border-box}body{font:16px system-ui,sans-serif;background:#101820;color:#eaf1f5;margin:0}main{max-width:900px;margin:auto;padding:28px 20px}a{color:#84caff}h1{margin-bottom:8px}p{color:#b6c6d1;line-height:1.5}.panel{background:#192731;padding:20px;border-radius:12px;margin:20px 0}.view{position:relative;aspect-ratio:16/9;background:#080f14;border-radius:8px;overflow:hidden}.view img{width:100%;height:100%;object-fit:contain}#grid{position:absolute;inset:0;display:grid;grid-template-columns:repeat(4,1fr);grid-template-rows:repeat(4,1fr)}#grid button{background:#0005;border:1px solid #ffffff50;border-radius:0;color:white;font-size:14px;cursor:pointer}#grid button[aria-pressed=true]{background:#17a88738;border:2px solid #56e6bc}button,select{font:inherit;border-radius:6px;border:1px solid #547080;padding:9px 14px;background:#243c4c;color:white}button{cursor:pointer}button:disabled{opacity:.5;cursor:wait}.controls{display:flex;gap:18px;align-items:center;flex-wrap:wrap}.controls label{display:flex;gap:8px;align-items:center}.primary{background:#19795f;border-color:#56e6bc}#status{font-weight:600}#message{min-height:24px}input{width:18px;height:18px}
+</style>
+<main><a href="/">← Camera home</a><h1>Motion zones</h1><p>Click the grid cells you want to monitor. Green cells are selected. This detects image changes, including shadows and lighting changes.</p>
+<div class="panel"><div class="view"><img id="snapshot" alt="Camera snapshot"><div id="grid" aria-label="Detection zones"></div></div><p id="status" role="status">Loading detector status…</p><div class="controls"><button id="all">Select all</button><button id="none">Clear selection</button><button id="refresh">Refresh image</button></div></div>
+<div class="panel"><div class="controls"><label><input type="checkbox" id="enabled"> Enable motion detection</label><label>Sensitivity <select id="sensitivity"><option value="0">0 — Lowest</option><option value="1">1 — Low</option><option value="2">2 — Medium</option><option value="3">3 — High</option><option value="4">4 — Highest</option></select></label><button class="primary" id="save">Save and restart video</button></div><p>Saving briefly interrupts the video streams. Settings survive a reboot. Recording is off.</p><p id="message" role="status"></p></div></main>
+<script>
+const $=id=>document.getElementById(id), endpoint='/x/motion-zones.cgi';let mask=65535,busy=false;
+for(let i=0;i<16;i++){const b=document.createElement('button');b.type='button';b.textContent=i+1;b.setAttribute('aria-label','Zone '+(i+1));b.onclick=()=>{mask^=1<<i;render()};$('grid').append(b)}
+function render(){[...$('grid').children].forEach((b,i)=>b.setAttribute('aria-pressed',!!(mask&(1<<i))))}
+async function request(options){const r=await fetch(endpoint,options);if(r.status===401){throw Error('Sign in on the camera home page, then return here.')}const j=await r.json();if(!r.ok)throw Error(j.error||'Request failed');return j}
+function picture(){$('snapshot').src=endpoint+'?snapshot&t='+Date.now()}
+function status(s){$('status').textContent=s.active?(s.motion?'Motion detected':'Detector active · No motion right now'):'Detector inactive'}
+async function load(){try{const j=await request();mask=j.mask;$('enabled').checked=j.enabled;$('sensitivity').value=j.sensitivity;render();status(j.live);picture()}catch(e){$('message').textContent=e.message}}
+$('all').onclick=()=>{mask=65535;render()};$('none').onclick=()=>{mask=0;render()};$('refresh').onclick=picture;
+$('save').onclick=async()=>{if(!mask){$('message').textContent='Select at least one zone.';return}busy=true;$('save').disabled=true;try{await request({method:'POST',headers:{'Content-Type':'application/x-thingino-motion-zones'},body:[+$('enabled').checked,$('sensitivity').value,mask].join(' ')});$('message').textContent='Saved. Video is restarting…';setTimeout(async()=>{busy=false;$('save').disabled=false;await load();$('message').textContent='Settings saved.'},15000)}catch(e){busy=false;$('save').disabled=false;$('message').textContent=e.message}};
+setInterval(async()=>{if(!busy)try{status((await request()).live)}catch(e){$('status').textContent=e.message}},3000);load();
+</script></html>

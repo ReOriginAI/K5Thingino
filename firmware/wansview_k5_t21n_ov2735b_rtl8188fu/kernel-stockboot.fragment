@@ -1,0 +1,19 @@
+# Wansview K5 stock-U-Boot-compatible T21 Linux boot arguments.
+# Original U-Boot keeps kernel at 0x040000, root at 0x2c0000.
+# ONLY the original root region is divided into rootfs+Thingino overlay.
+# Original stock bootloader, syscfg/sysbak, mini recovery kernel/root remain.
+CONFIG_CMDLINE_BOOL=y
+CONFIG_CMDLINE="console=ttyS1,115200n8 mem=41M@0x0 rmem=23M@0x2900000 panic=2 init=/init rootfstype=squashfs root=/dev/mtdblock2 rw mtdparts=jz_sfc:256k(boot),2560k(kernel),6144k(rootfs),2944k(data),320k(syscfg),320k(sysbak),1472k(minikernel),2304k(minirootfs),64k(upgrade)"
+CONFIG_CMDLINE_OVERRIDE=y
+
+# SD-only recovery and logging must work with the factory updater's FAT32 card.
+CONFIG_FAT_FS=y
+CONFIG_VFAT_FS=y
+CONFIG_FAT_DEFAULT_CODEPAGE=437
+CONFIG_FAT_DEFAULT_IOCHARSET="iso8859-1"
+CONFIG_NLS_CODEPAGE_437=y
+CONFIG_NLS_ISO8859_1=y
+CONFIG_NLS_UTF8=y
+
+# Keep the hardware timer armed if shutdown or a driver gets stuck.
+CONFIG_WATCHDOG_NOWAYOUT=y

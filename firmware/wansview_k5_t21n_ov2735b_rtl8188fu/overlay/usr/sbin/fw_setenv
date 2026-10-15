@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+echo 'K5: stock bootloader preserved; writing a Thingino ENV is disabled.' >&2
+exit 1

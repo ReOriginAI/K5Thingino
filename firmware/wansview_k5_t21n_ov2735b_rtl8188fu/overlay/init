@@ -1,0 +1,120 @@
+#!/bin/sh
+# Mount failures have explicit handling; do not abort before lower-root recovery.
+set -u
+init_card=false
+
+init_stage() {
+	printf '<6>K5_INIT %s\n' "$1" >/dev/kmsg
+	if [ "$init_card" = true ]; then
+		printf '%s %s\n' "$(cut -d' ' -f1 /proc/uptime)" "$1" >>/media/k5-logs/init-latest.txt
+		sync
+	fi
+}
+
+prepare_sd_log() {
+	mountpoint -q /sys || mount -t sysfs sysfs /sys || return 0
+	modprobe jzmmc_v12 cd_gpio_pin=52 || return 0
+	i=0
+	while [ ! -b /dev/mmcblk0p1 ] && [ "$i" -lt 5 ]; do
+		i=$((i + 1))
+		sleep 1
+	done
+	[ -b /dev/mmcblk0p1 ] || return 0
+	# The pre-overlay path intentionally uses built-in FAT32 only.
+	if mount -t vfat -o noatime,sync /dev/mmcblk0p1 /media; then
+		mkdir -p /media/k5-logs
+		if [ -f /media/k5-logs/init-latest.txt ]; then
+			mv /media/k5-logs/init-latest.txt /media/k5-logs/init-previous.txt
+		fi
+		init_card=true
+		init_stage sd.early-mounted
+	fi
+}
+
+die() {
+	printf "\e[38;5;160mInit: [ERROR] %s\e[0m\n" "$1" >&2
+	exit 1
+}
+
+on_exit() {
+	if [ "$init_card" = true ]; then umount /media; fi
+	mountpoint -q /proc && umount /proc
+	exec /sbin/init "$@"
+}
+
+mount_jffs2() {
+	# This exact area is inside the original root partition, after SquashFS.
+	awk '$1 == "mtd3:" && $2 == "002e0000" && $4 == "\"data\"" {found=1} END {exit !found}' /proc/mtd ||
+		die "Unexpected K5 data partition; refusing formatting!"
+	if ! mount -t jffs2 -o noatime /dev/mtdblock3 /overlay; then
+		init_stage overlay.format.begin
+		flash_eraseall -j /dev/mtd3 || die "Cannot format K5 data!"
+		mount -t jffs2 -o noatime /dev/mtdblock3 /overlay || die "Cannot mount K5 data!"
+		init_stage overlay.format.complete
+	fi
+}
+
+prepare_overlay_dirs() {
+	overlay_rootdir="/overlay/root"
+	overlay_workdir="/overlay/work"
+	mkdir -p "$overlay_rootdir" || return 1
+	rm -rf "$overlay_workdir"
+	mkdir -p "$overlay_workdir" || return 1
+}
+
+cleanup_overlay_dirs() {
+	rmdir /overlay/work 2>/dev/null
+	rmdir /overlay/root 2>/dev/null
+}
+
+mount_overlay() {
+	if grep -q overlayfs /proc/filesystems; then
+		mount -t overlayfs -o noatime,lowerdir=/,upperdir=/overlay overlay /mnt && return 0
+		prepare_overlay_dirs || return 1
+		mount -t overlay -o noatime,lowerdir=/,upperdir="$overlay_rootdir",workdir="$overlay_workdir" overlay /mnt && return 0
+		return 1
+	fi
+
+	prepare_overlay_dirs || return 1
+	mount -t overlay -o noatime,lowerdir=/,upperdir="$overlay_rootdir",workdir="$overlay_workdir" overlay /mnt && return 0
+	cleanup_overlay_dirs
+	mount -t overlayfs -o noatime,lowerdir=/,upperdir=/overlay overlay /mnt && return 0
+	return 1
+}
+
+trap 'on_exit "$@"' EXIT
+
+# Mount /proc
+mount -t proc proc /proc ||
+	die "Failed to mount /proc!"
+
+# Skip if rootfs is NFS, MMC or RAM
+grep -q 'root=.*nfs\|mmcblk\|ram' /proc/cmdline &&
+	die "Not an MTD RootFS!"
+
+prepare_sd_log
+init_stage overlay.mount.begin
+
+# Mount data partition (single overlay covering whole filesystem)
+mount_jffs2
+
+init_stage overlay.jffs2-mounted
+mount_overlay || die "Failed to mount overlay!"
+init_stage overlay.ready
+
+init_stage pivot.begin
+if [ "$init_card" = true ]; then
+	umount /media || die "Failed to unmount early SD logging mount!"
+	init_card=false
+fi
+
+# Pivot root to overlay
+pivot_root /mnt /mnt/rom || die "Failed to pivot_root!"
+mount -o noatime,move /rom/proc /proc
+mount -o noatime,move /rom/sys /sys
+mount -o noatime,move /rom/dev /dev
+
+# Move data partition to new root
+mount -o noatime,move /rom/overlay /overlay || die "Failed to move /overlay"
+
+init_stage pivot.complete

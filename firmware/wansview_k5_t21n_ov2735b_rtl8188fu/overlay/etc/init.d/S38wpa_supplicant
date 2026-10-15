@@ -1,0 +1,203 @@
+#!/bin/sh
+# Commands can fail during radio recovery; check each important result explicitly.
+set -u
+
+config=/etc/wpa_supplicant.conf
+iface=wlan0
+pidfile=/run/wpa_supplicant.wlan0.pid
+attempt=/etc/k5-wifi-attempt
+
+select_mode() {
+	if [ -f /run/k5-force-portal ] || [ -f "$attempt" ]; then
+		mode=portal
+		k5-log wifi.portal.recovery
+	elif ! grep -q '^[[:space:]]*psk=' "$config" || ! grep -q '^[[:space:]]*ssid=' "$config"; then
+		mode=portal
+	elif grep -q '^[[:space:]]*mode=2' "$config"; then
+		mode=ap
+	else
+		mode=client
+	fi
+}
+
+launch_wpa() {
+	# No debug key dumps; private startup output stays in volatile RAM.
+	timeout 12 /usr/sbin/wpa_supplicant -D nl80211 -i "$iface" -c "$1" -P "$pidfile" -B >/run/k5-wpa-private.log 2>&1
+}
+
+start_portal() {
+	mac=$(cat /sys/class/net/wlan0/address 2>/dev/null || echo 00:00:00:00:00:00)
+	suffix=$(printf '%s' "$mac" | awk -F: '{print $5 $6}')
+	cat >/run/k5-portal.conf <<-EOF
+		ctrl_interface=/run/wpa_supplicant
+		ap_scan=2
+		network={
+			ssid="THINGINO-$suffix"
+			mode=2
+			frequency=2412
+			key_mgmt=NONE
+		}
+	EOF
+	touch /run/portal_mode
+	printf 'portal\n' >/run/k5-wifi-mode
+	ip link set "$iface" up || return 1
+	ip addr replace 172.16.0.1/24 dev "$iface" || return 1
+	ip route replace 172.16.0.0/24 dev "$iface" || return 1
+	if launch_wpa /run/k5-portal.conf; then
+		k5-log wifi.portal.started
+	else
+		k5-log wifi.portal.start-failed
+		return 1
+	fi
+}
+
+finish_portal() {
+	[ -f /run/portal_mode ] || return 0
+	[ ! -f /run/k5-portal-services ] || return 0
+	sed "s/%dev%/$iface/g" /etc/udhcpd-portal.conf >/run/k5-udhcpd.conf
+	# Reserve the server address; the upstream pool includes .1.
+	sed -i 's/^start[[:space:]].*/start 172.16.0.2/' /run/k5-udhcpd.conf
+	touch /run/udhcpd.leases
+	udhcpd -S -I 172.16.0.1 /run/k5-udhcpd.conf || return 1
+	dnsd -i 172.16.0.1 -c /etc/dnsd-portal.conf -d || return 1
+	touch /run/k5-portal-services
+	k5-log wifi.portal.services-started
+	play /usr/share/sounds/configurationportalisup.opus >/dev/null 2>&1 &
+}
+
+prepare_ap() {
+	touch /run/wlan_ap_mode
+	ip link set "$iface" up || return 1
+	ip addr replace 100.64.1.1/24 dev "$iface" || return 1
+	ip route replace 100.64.1.0/24 dev "$iface" || return 1
+	sed "s/%dev%/$iface/g" /etc/udhcpd-ap.conf >/run/k5-udhcpd.conf
+	sed -i 's/^start[[:space:]].*/start 100.64.1.2/' /run/k5-udhcpd.conf
+	touch /run/udhcpd_ap.leases
+	cp /etc/resolv-ap.conf /tmp/resolv.conf
+	udhcpd -S -I 100.64.1.1 /run/k5-udhcpd.conf || return 1
+	dnsd -i 100.64.1.1 -c /etc/dnsd-ap.conf -d || return 1
+}
+
+configured_worker() {
+	mode=$1
+	# A separate guard must survive a blocked wpa_cli ioctl. A userspace
+	# timeout cannot reap a process stuck in uninterruptible kernel sleep.
+	"$0" guard >/run/k5-wifi-guard-private.log 2>&1 &
+	guard_pid=$!
+	echo "$guard_pid" >/run/k5-wifi-guard.pid
+	# Monitor independently of launch: timeout cannot reap an uninterruptible
+	# kernel task, so waiting for it here would defeat the recovery timer.
+	(
+		if launch_wpa "$config"; then
+			k5-log "wifi.$mode.supplicant-started"
+		else
+			touch /run/k5-wpa-start-failed
+		fi
+	) &
+	if [ "$mode" = client ]; then
+		udhcpc -f -i "$iface" -p /run/udhcpc.wlan0.pid -s /usr/share/udhcpc/default.script >/run/k5-dhcp-private.log 2>&1 &
+	fi
+	# Policy: allow 90 polls for association/DHCP and require 3 good polls.
+	# Each control request is bounded; a hung driver cannot stall rcS.
+	i=0
+	stable=0
+	while [ "$i" -lt 90 ]; do
+		[ ! -f /run/k5-rebooting ] || return 0
+		[ ! -f /run/k5-wpa-start-failed ] || break
+		status=$(timeout 2 wpa_cli -p /run/wpa_supplicant -i "$iface" status 2>/dev/null) || status=""
+		ready=false
+		if printf '%s\n' "$status" | grep -q '^wpa_state=COMPLETED$'; then
+			if [ "$mode" = ap ]; then
+				printf '%s\n' "$status" | grep -q '^mode=AP$' && ready=true
+			elif ip -4 addr show dev "$iface" | grep -q 'inet '; then
+				ready=true
+			fi
+		fi
+		if [ "$ready" = true ]; then stable=$((stable + 1)); else stable=0; fi
+		if [ "$stable" -ge 3 ]; then
+			rm -f "$attempt"
+			touch /run/k5-wifi-ready
+			kill "$guard_pid" 2>/dev/null || true
+			sync
+			k5-log "wifi.$mode.ready"
+			k5-report
+			return 0
+		fi
+		i=$((i + 1))
+		sleep 1
+	done
+	fallback
+}
+
+guard() {
+	# Policy: hard ceiling of 180 seconds for configured Wi-Fi bring-up.
+	sleep 180 &
+	sleep_pid=$!
+	trap 'kill "$sleep_pid" 2>/dev/null || true; exit 0' TERM INT
+	wait "$sleep_pid"
+	if [ ! -f /run/k5-wifi-ready ] && [ ! -f /run/k5-rebooting ]; then
+		fallback
+	fi
+}
+
+fallback() {
+	k5-log wifi.configured.failed
+	k5-report
+	# Keep the attempt latch. The next boot uses a RAM-only open portal config.
+	# Reboot avoids untested Realtek driver unload/reload during recovery.
+	k5-reboot
+}
+
+start() {
+	rm -f /run/k5-wpa-start-failed
+	select_mode
+	printf '%s\n' "$mode" >/run/k5-wifi-mode
+	k5-log "wifi.$mode.selected"
+	case "$mode" in
+		portal) start_portal ;;
+		ap | client)
+			# Persist BEFORE touching the configured radio, even if it panics.
+			printf 'configured-attempt\n' >"$attempt.new" || return 1
+			mv "$attempt.new" "$attempt" || return 1
+			sync
+			if [ "$mode" = ap ]; then
+				if ! prepare_ap; then
+					fallback
+					return 1
+				fi
+			fi
+			"$0" configured_worker "$mode" >/run/k5-wifi-worker-private.log 2>&1 &
+			echo "$!" >/run/k5-wifi-worker.pid
+			;;
+	esac
+}
+
+stop() {
+	# Use running state rather than the configuration just changed by the CGI.
+	if [ -f /run/k5-wifi-worker.pid ]; then
+		kill "$(cat /run/k5-wifi-worker.pid)" 2>/dev/null || true
+	fi
+	if [ -f /run/k5-wifi-guard.pid ]; then
+		kill "$(cat /run/k5-wifi-guard.pid)" 2>/dev/null || true
+	fi
+	for name in udhcpc udhcpd dnsd wpa_supplicant; do
+		killall "$name" 2>/dev/null || true
+	done
+	rm -f /run/k5-wifi-worker.pid /run/k5-wifi-guard.pid /run/k5-wpa-start-failed /run/k5-wifi-ready /run/k5-portal-services /run/portal_mode /run/wlan_ap_mode
+}
+
+case "${1:-}" in
+	start) start ;;
+	stop) stop ;;
+	restart)
+		stop
+		start
+		;;
+	portal_confirmed) finish_portal ;;
+	configured_worker) configured_worker "$2" ;;
+	guard) guard ;;
+	*)
+		echo "Usage: $0 {start|stop|restart|portal_confirmed}" >&2
+		exit 1
+		;;
+esac

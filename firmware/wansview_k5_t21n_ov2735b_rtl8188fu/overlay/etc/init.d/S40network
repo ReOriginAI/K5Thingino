@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+# This K5 has no wired network. S38 owns the radio and its DHCP client.
+case "${1:-}" in
+	start | restart)
+		ip addr replace 127.0.0.1/8 dev lo
+		ip link set lo up
+		k5-log network.loopback-ready
+		;;
+	stop) : ;;
+	*) exit 1 ;;
+esac

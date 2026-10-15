@@ -1,0 +1,42 @@
+#!/bin/sh
+set -eu
+
+card=/mnt/mmcblk0p1
+mountpoint -q "$card" || exit 0
+mkdir -p "$card/k5-logs"
+report="$card/k5-logs/runtime-latest.txt"
+{
+	printf 'THINGINO_BOOTED=YES\n'
+	cat /etc/k5-build-id
+	printf '\n--- safe boot events ---\n'
+	cat /run/k5-events.log 2>/dev/null || true
+	printf '\n--- kernel and flash layout ---\n'
+	uname -r
+	cat /proc/cmdline /proc/mtd
+	printf '\n--- memory ---\n'
+	cat /proc/meminfo
+	printf '\n--- SD filesystem ---\n'
+	awk '$2 == "/mnt/mmcblk0p1" {print $1, $2, $3, $4}' /proc/mounts
+	printf '\n--- network state (identifiers omitted) ---\n'
+	cat /run/k5-wifi-mode 2>/dev/null || true
+	if [ -f /run/k5-wifi-ready ]; then echo WIFI_READY=YES; else echo WIFI_READY=NO; fi
+	if [ -f /etc/k5-wifi-attempt ]; then echo WIFI_ATTEMPT_LATCH=YES; else echo WIFI_ATTEMPT_LATCH=NO; fi
+	printf '\n--- kernel error counters (raw messages omitted) ---\n'
+	dmesg | awk '
+		/out of memory|Out of memory|oom-killer|Killed process/ {oom++}
+		/BUG:|Oops:|Call Trace:|Kernel panic/ {crash++}
+		/jffs2.*[Ee]rror|jffs2.*[Ff]ail|Magic bitmask/ {jffs++}
+		/8188.*[Ee]rror|8188.*[Ff]ail|RTW.*[Ee]rror|RTW.*[Ff]ail/ {wifi++}
+		END {printf "OOM_MESSAGES=%d\nCRASH_MESSAGES=%d\nJFFS2_MESSAGES=%d\nWIFI_ERROR_MESSAGES=%d\n", oom, crash, jffs, wifi}'
+} >"$report.new"
+mv "$report.new" "$report"
+if [ -f "$card/COLLECT_PRIVATE_LOGS" ]; then
+	# These files can contain SSIDs/MACs and must not be posted unredacted.
+	dmesg >"$card/k5-logs/PRIVATE-kernel-latest.txt"
+	for name in wpa wifi-worker dhcp; do
+		if [ -f "/run/k5-$name-private.log" ]; then
+			cp "/run/k5-$name-private.log" "$card/k5-logs/PRIVATE-$name-latest.txt"
+		fi
+	done
+fi
+sync

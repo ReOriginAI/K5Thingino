@@ -1,0 +1,59 @@
+#!/bin/sh
+set -eu
+# K5 factory reset erases the named data overlay only, never the kernel.
+force_wipe=false
+
+while getopts "efh" opt; do
+	case $opt in
+		e)
+			: # Compatibility: K5 never erases an ENV partition.
+			;;
+		f)
+			force_wipe=true
+			;;
+		h)
+			printf 'Usage: %s [-f] [-e] (erase K5 data only)\n' "$0"
+			exit 0
+			;;
+		\?)
+			echo "Invalid option. Use -h for help."
+			exit 1
+			;;
+	esac
+done
+
+wipe() {
+	data_dev=$(awk '$1 == "mtd3:" && $2 == "002e0000" && $4 == "\"data\"" {print "mtd3"}' /proc/mtd)
+	if [ -z "$data_dev" ]; then
+		echo "Overlay partition not found!" >&2
+		exit 1
+	fi
+	echo "Erasing overlay partition..."
+	[ "$data_dev" = mtd3 ] || {
+		echo "K5 data layout mismatch" >&2
+		exit 1
+	}
+	flash_eraseall -j "/dev/${data_dev}"
+
+	echo "Erase completed. Rebooting..."
+	reboot -f
+}
+
+warn() {
+	printf 'Warning\nThis action will reset the device to defaults and erase all configurations, leaving the device like the first boot.\nAll saved settings will be erased!\nAre you sure you want to proceed? (yes/no)\n'
+	read -r response
+	if [ "$response" != "yes" ]; then
+		echo "Operation aborted." >&2
+		exit 1
+	else
+		wipe
+	fi
+}
+
+if [ "$force_wipe" = true ]; then
+	wipe
+else
+	warn
+fi
+
+exit 0

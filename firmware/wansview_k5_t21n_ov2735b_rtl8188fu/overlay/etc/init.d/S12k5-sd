@@ -1,0 +1,34 @@
+#!/bin/sh
+set -eu
+
+[ "${1:-}" = start ] || exit 0
+card=/mnt/mmcblk0p1
+mkdir -p "$card"
+
+# S09 loads the host; a cold boot need not generate a usable mdev event.
+if ! mountpoint -q "$card"; then
+	i=0
+	while [ ! -b /dev/mmcblk0p1 ] && [ "$i" -lt 5 ]; do
+		i=$((i + 1))
+		sleep 1
+	done
+	if [ -b /dev/mmcblk0p1 ]; then
+		mount -t vfat -o noatime,sync /dev/mmcblk0p1 "$card" ||
+			mount -t exfat -o noatime,sync /dev/mmcblk0p1 "$card" || true
+	fi
+fi
+
+if mountpoint -q "$card"; then
+	mkdir -p "$card/k5-logs"
+	for name in events runtime; do
+		if [ -f "$card/k5-logs/$name-latest.txt" ]; then
+			mv "$card/k5-logs/$name-latest.txt" "$card/k5-logs/$name-previous.txt"
+		fi
+	done
+	if [ -f "$card/FORCE_PORTAL" ]; then touch /run/k5-force-portal; fi
+	k5-log sd.mounted
+else
+	k5-log sd.unavailable
+fi
+k5-log services.before-wifi
+k5-report

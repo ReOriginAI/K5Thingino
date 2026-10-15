@@ -1,0 +1,87 @@
+#!/bin/sh
+set -eu
+umask 077
+LC_ALL=C
+export LC_ALL
+
+config=/etc/wpa_supplicant.conf
+fail() {
+	echo "$1" >&2
+	exit 1
+}
+
+configure() {
+	if [ "$#" -lt 2 ] || [ "$#" -gt 4 ]; then fail "Expected SSID, passphrase and optional BSSID or ap"; fi
+	ssid=$1
+	secret=$2
+	if [ "${#ssid}" -lt 1 ] || [ "${#ssid}" -gt 32 ]; then fail "SSID must contain 1 to 32 bytes"; fi
+	case "$ssid" in
+		*"$(printf '\r')"* | *'
+'*) fail "SSID cannot contain a line break" ;;
+	esac
+	psk=""
+	if printf '%s\n' "$secret" | grep -qE '^[0-9a-fA-F]{64}$'; then
+		psk=$secret
+	else
+		if [ "${#secret}" -lt 8 ] || [ "${#secret}" -gt 63 ]; then fail "Passphrase must contain 8 to 63 bytes"; fi
+		psk=$(wpa_passphrase "$ssid" "$secret" 2>/dev/null | awk -F= '/^[[:space:]]*psk=[^"]*$/{print $2; exit}')
+	fi
+	printf '%s\n' "$psk" | grep -qE '^[0-9a-fA-F]{64}$' || fail "Cannot derive WPA key"
+	ap=false
+	bssid=""
+	shift 2
+	for arg in "$@"; do
+		case "$arg" in
+			ap) ap=true ;;
+			*)
+				printf '%s\n' "$arg" | grep -qE '^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$' || fail "Invalid BSSID"
+				bssid=$arg
+				;;
+		esac
+	done
+	escaped=$(printf '%s' "$ssid" | sed 's/\\/\\\\/g; s/"/\\"/g')
+	{
+		echo 'ctrl_interface=/run/wpa_supplicant'
+		if [ "$ap" = true ]; then echo ap_scan=2; else echo ap_scan=1; fi
+		echo 'network={'
+		printf '\tssid="%s"\n\tpsk=%s\n' "$escaped" "$psk"
+		if [ "$ap" = true ]; then
+			printf '\tmode=2\n\tfrequency=2412\n\tkey_mgmt=WPA-PSK\n\tproto=RSN\n\tpairwise=CCMP\n\tgroup=CCMP\n'
+		else
+			echo '    scan_ssid=1'
+			[ -z "$bssid" ] || printf '\tbssid=%s\n' "$bssid"
+		fi
+		echo '}'
+	} >"$config.k5-new"
+	mv "$config.k5-new" "$config"
+	rm -f /etc/k5-wifi-attempt
+	sync
+	k5-log wifi.configuration.saved
+}
+
+reset() {
+	cp /rom/etc/wpa_supplicant.conf "$config.k5-new"
+	mv "$config.k5-new" "$config"
+	rm -f /etc/k5-wifi-attempt
+	sync
+	k5-log wifi.configuration.reset
+}
+
+case "$(basename "$0")" in
+	wlanreset) set -- reset ;;
+	wlaninfo) set -- info ;;
+	wlanrssi) set -- rssi ;;
+	wlantemp) set -- temp ;;
+	wlansetup) set -- setup ;;
+esac
+case "${1:-}" in
+	configure)
+		shift
+		configure "$@"
+		;;
+	reset) reset ;;
+	info) iwconfig wlan0 ;;
+	rssi) iwconfig wlan0 | sed -n 's/.*Signal level= *\(-\?[0-9]*\).*/\1/p' ;;
+	temp) echo "Temperature unavailable for RTL8188FU" ;;
+	*) fail "Usage: wlan {configure SSID PASS [BSSID|ap]|reset|info|rssi|temp}" ;;
+esac

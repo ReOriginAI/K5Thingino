@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+	start)
+		# Fixed hardware configuration; stock U-Boot has no Thingino ENV partition.
+		start-stop-daemon -S -b -m -p /run/watchdog.pid -x /usr/sbin/watchdog -- -T 60 -t 5 /dev/watchdog
+		;;
+	stop | kill)
+		killall -9 watchdog 2>/dev/null || true
+		;;
+	*) exit 1 ;;
+esac

@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+[ ! -f /run/k5-rebooting ] || exit 0
+touch /run/k5-rebooting
+k5-log reboot.requested
+k5-report
+sync
+sleep 2
+reboot

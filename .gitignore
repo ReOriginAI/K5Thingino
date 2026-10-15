@@ -1,0 +1,20 @@
+# Private device data and session history.
+/backups/
+/archive/
+/quarantine/
+/recovery/*
+!/recovery/README.md
+uenv.txt
+PRIVATE-*
+k5-logs/
+
+# Local upstream checkout, compiler caches, downloaded tools and artifacts.
+/thingino-firmware/
+/tools/
+/dist/
+/releases/*.zip
+/docs/logs/
+__pycache__/
+*.py[cod]
+.DS_Store
+Thumbs.db

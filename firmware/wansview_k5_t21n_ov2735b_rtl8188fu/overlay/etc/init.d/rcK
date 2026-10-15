@@ -1,0 +1,21 @@
+#!/bin/sh
+# Shutdown is best-effort and must continue after individual service errors.
+set -u
+
+touch /run/k5-rebooting
+# Stop feeding BEFORE calling drivers. NOWAYOUT keeps the timer armed.
+# This also bounds a kernel task that ignores a userspace timeout.
+killall -9 watchdog 2>/dev/null || true
+k5-log shutdown.begin
+sync
+deadline=$(($(date +%s) + 30))
+for script in S98recorder S95recordmgr S31prudynt S60uhttpd S38wpa_supplicant S15thingino-button; do
+	[ "$(date +%s)" -lt "$deadline" ] || break
+	if [ -x "/etc/init.d/$script" ]; then
+		k5-log "shutdown.$script"
+		timeout -s KILL 3 /bin/sh "/etc/init.d/$script" stop || true
+	fi
+done
+sync
+k5-log shutdown.force-reboot
+reboot -f
